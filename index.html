@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pikmin Bloom Tracker</title>
+<style>
+  :root{
+    --bg:#f6f7f2; --card:#ffffff; --ink:#1f2a1f; --muted:#6b776b; --line:#e2e6dc; --accent:#3f8f4f; --accent-ink:#fff; --danger:#c2413b;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#141a14; --card:#1d261d; --ink:#e8efe6; --muted:#97a597; --line:#2c382c; --accent:#5bb06c; --accent-ink:#0d150d; --danger:#e06a63; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:900px;margin:0 auto;padding:16px 14px 80px}
+  h1{font-size:20px;margin:6px 0 14px}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:14px}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+  .stat b{display:block;font-size:22px}
+  .stat span{color:var(--muted);font-size:12px}
+  .colors{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:8px;margin-bottom:14px}
+  .chip{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 10px;cursor:pointer;text-align:left;color:var(--ink);font:inherit}
+  .chip.on{outline:2px solid var(--accent)}
+  .dot{width:16px;height:16px;border-radius:50%;border:1px solid rgba(0,0,0,.25);flex:none}
+  .chip small{color:var(--muted);display:block;font-size:11px}
+  .chip b{font-size:16px}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:14px}
+  .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  input,select,button{font:inherit;color:var(--ink)}
+  input,select{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px 9px;min-width:0}
+  input[type=number]{width:70px}
+  button{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 11px;cursor:pointer}
+  button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+  button.danger{color:var(--danger)}
+  .tabs{display:flex;gap:6px;margin-bottom:10px}
+  .tabs button.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+  .list{display:grid;gap:8px}
+  .p{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:grid;gap:8px}
+  .p.rel{opacity:.85}
+  .p .top{display:flex;gap:8px;align-items:center}
+  .p .name{flex:1;font-weight:600;border-color:transparent;background:transparent}
+  .p .name:focus{border-color:var(--line);background:var(--bg)}
+  .p .meta{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+  .stepper{display:flex;align-items:center;gap:4px}
+  .stepper button{padding:3px 9px}
+  .stepper span{min-width:28px;text-align:center;font-weight:600}
+  .lbl{color:var(--muted);font-size:12px}
+  .empty{color:var(--muted);text-align:center;padding:28px 0}
+  .note{color:var(--muted);font-size:12px;margin-top:6px}
+  .tag{font-size:11px;color:var(--muted)}
+  @media(max-width:520px){ input.decor{width:100%} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🌱 Pikmin Bloom Tracker</h1>
+
+  <div class="stats" id="stats"></div>
+  <div class="colors" id="colors"></div>
+
+  <div class="panel">
+    <div class="row">
+      <input id="newName" placeholder="Name (optional)" style="flex:1;min-width:130px">
+      <select id="newColor"></select>
+      <input id="newDecor" class="decor" list="decors" placeholder="Decor (blank = none)" style="flex:1;min-width:140px">
+      <button class="primary" id="addBtn">Add Pikmin</button>
+    </div>
+    <datalist id="decors"></datalist>
+  </div>
+
+  <div class="tabs">
+    <button id="tabActive" class="on">Active</button>
+    <button id="tabReleased">Released</button>
+  </div>
+
+  <div class="panel row">
+    <input id="q" placeholder="Search name or decor" style="flex:1;min-width:140px">
+    <select id="fDecor">
+      <option value="all">Any decor</option>
+      <option value="none">No decor</option>
+      <option value="has">Has decor</option>
+    </select>
+    <select id="sort">
+      <option value="created">Newest first</option>
+      <option value="name">Name</option>
+      <option value="color">Color</option>
+      <option value="affinity">Affinity ↓</option>
+      <option value="fruits">Fruits ↓</option>
+    </select>
+    <button id="clearColor">All colors</button>
+  </div>
+
+  <div class="list" id="list"></div>
+  <div class="panel row" style="margin-top:14px">
+    <button id="exportBtn">Export backup</button>
+    <button id="importBtn">Import backup</button>
+    <input type="file" id="importFile" accept="application/json,.json" hidden>
+    <span class="tag" id="ioMsg"></span>
+  </div>
+  <div class="note" id="storeNote"></div>
+</div>
+
+<script>
+const COLORS = [
+  {k:'Red',h:'#e5484d'},{k:'Yellow',h:'#f5c518'},{k:'Blue',h:'#3b82f6'},{k:'Purple',h:'#8b5cf6'},
+  {k:'White',h:'#f1f5f9'},{k:'Pink',h:'#f472b6'},{k:'Rock',h:'#78716c'},{k:'Winged',h:'#a5f3fc'}
+];
+const DECORS = ['Restaurant','Cafe','Bakery','Sweets','Greengrocer','Zoo','Pharmacy','Airport','Forest','Beach','Waterside','Movie Theater','Art Gallery','Post Office','Hair Salon','Park','Burger Shop','Bookstore','Station','Pizza','Ramen','Bagel','Cherry Blossom'];
+
+let items = [];
+let tab = 'active';
+let colorFilter = null;
+let store = null;
+
+const $ = id => document.getElementById(id);
+const cHex = k => (COLORS.find(c=>c.k===k)||{}).h || '#999';
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+
+/* ---------- storage: db if available, localStorage fallback ---------- */
+function makeLocalStore(){
+  const KEY='pikminTracker.v1';
+  let cb=null;
+  const load=()=>{ try{ return JSON.parse(localStorage.getItem(KEY)||'[]'); }catch(e){ return []; } };
+  let data=load();
+  const persist=()=>{ try{ localStorage.setItem(KEY,JSON.stringify(data)); }catch(e){} if(cb) cb(data.slice()); };
+  return {
+    kind:'local',
+    subscribe(f){ cb=f; f(data.slice()); },
+    save(p){ const i=data.findIndex(x=>x.id===p.id); if(i>=0) data[i]=p; else data.push(p); persist(); },
+    remove(id){ data=data.filter(x=>x.id!==id); persist(); }
+  };
+}
+async function makeDbStore(){
+  try{
+    if(!window.claude || !window.claude.use) return null;
+    const db = await window.claude.use('db');
+    const user = await window.claude.use('user');
+    if(!db || !user) return null;
+    const id = await user.id();
+    const col = db.collection('data/users/'+id+'/pikmin');
+    return {
+      kind:'db',
+      subscribe(f){
+        col.onSnapshot(snap=>{
+          let arr=[];
+          const norm=d=> (d && typeof d.data==='function') ? Object.assign({id:d.id}, d.data()) : d;
+          if(Array.isArray(snap)) arr=snap.map(norm);
+          else if(snap && snap.docs) arr=snap.docs.map(norm);
+          else if(snap && typeof snap.forEach==='function'){ snap.forEach(d=>arr.push(norm(d))); }
+          f(arr.filter(Boolean));
+        });
+      },
+      save(p){ return col.doc(p.id).set(p); },
+      remove(id){ return col.doc(id).delete(); }
+    };
+  }catch(e){ return null; }
+}
+
+/* ---------- actions ---------- */
+function upsert(p){
+  const i=items.findIndex(x=>x.id===p.id);
+  if(i>=0) items[i]=p; else items.push(p);
+  store.save(p);
+  render();
+}
+function patch(id, ch){
+  const p=items.find(x=>x.id===id); if(!p) return;
+  upsert(Object.assign({}, p, ch));
+}
+function addPikmin(){
+  const color=$('newColor').value;
+  const decor=$('newDecor').value.trim();
+  const n=$('newName').value.trim();
+  const same=items.filter(x=>x.color===color).length+1;
+  upsert({id:uid(), name:n||(color+' '+same), color, decor, affinity:0, fruits:0, released:false, releasedAt:null, createdAt:Date.now()});
+  $('newName').value=''; $('newDecor').value='';
+}
+function removeForever(id){
+  const p=items.find(x=>x.id===id); if(!p) return;
+  if(!p._confirm){ patch(id,{_confirm:true}); setTimeout(()=>{ const q=items.find(x=>x.id===id); if(q&&q._confirm){ patch(id,{_confirm:false}); } },4000); return; }
+  items=items.filter(x=>x.id!==id); store.remove(id); render();
+}
+
+/* ---------- render ---------- */
+function render(){
+  const active=items.filter(p=>!p.released), rel=items.filter(p=>p.released);
+  const withDecor=active.filter(p=>p.decor).length;
+  const sum=(a,k)=>a.reduce((s,p)=>s+(+p[k]||0),0);
+  $('stats').innerHTML = [
+    ['Active',active.length],['Released',rel.length],['With decor',withDecor],
+    ['No decor',active.length-withDecor],['Total affinity',sum(active,'affinity')],['Total fruits',sum(items,'fruits')]
+  ].map(([l,v])=>`<div class="stat"><b>${v}</b><span>${l}</span></div>`).join('');
+
+  const pool = tab==='active'?active:rel;
+  $('colors').innerHTML = COLORS.map(c=>{
+    const a=pool.filter(p=>p.color===c.k);
+    const d=a.filter(p=>p.decor).length;
+    return `<button class="chip ${colorFilter===c.k?'on':''}" data-c="${c.k}"><span class="dot" style="background:${c.h}"></span><span><b>${a.length}</b> ${c.k}<small>${d} decor · ${a.length-d} plain</small></span></button>`;
+  }).join('');
+  $('colors').querySelectorAll('.chip').forEach(b=>b.onclick=()=>{ colorFilter = colorFilter===b.dataset.c?null:b.dataset.c; render(); });
+
+  $('tabActive').className = tab==='active'?'on':'';
+  $('tabReleased').className = tab==='released'?'on':'';
+  $('tabActive').textContent='Active ('+active.length+')';
+  $('tabReleased').textContent='Released ('+rel.length+')';
+
+  const q=$('q').value.trim().toLowerCase(), fd=$('fDecor').value, so=$('sort').value;
+  let list=pool.filter(p=>(!colorFilter||p.color===colorFilter)
+    && (fd==='all'||(fd==='none'?!p.decor:!!p.decor))
+    && (!q||(p.name||'').toLowerCase().includes(q)||(p.decor||'').toLowerCase().includes(q)));
+  const ci=k=>COLORS.findIndex(c=>c.k===k);
+  list.sort((a,b)=> so==='name'?(a.name||'').localeCompare(b.name||'')
+    : so==='color'?ci(a.color)-ci(b.color)
+    : so==='affinity'?(b.affinity||0)-(a.affinity||0)
+    : so==='fruits'?(b.fruits||0)-(a.fruits||0)
+    : (b.createdAt||0)-(a.createdAt||0));
+
+  if(!list.length){ $('list').innerHTML=`<div class="empty">${tab==='active'?'No Pikmin here yet.':'Nothing released.'}</div>`; }
+  else $('list').innerHTML = list.map(p=>{
+    const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+    const colorOpts=COLORS.map(c=>`<option ${c.k===p.color?'selected':''}>${c.k}</option>`).join('');
+    const relInfo=p.released?`<span class="tag">Released ${p.releasedAt?new Date(p.releasedAt).toLocaleDateString():''}</span>`:'';
+    return `<div class="p ${p.released?'rel':''}" data-id="${p.id}">
+      <div class="top">
+        <span class="dot" style="background:${cHex(p.color)};width:20px;height:20px"></span>
+        <input class="name" value="${esc(p.name)}" data-f="name" aria-label="Name">
+        ${relInfo}
+      </div>
+      <div class="meta">
+        <select data-f="color">${colorOpts}</select>
+        <input class="decor" list="decors" data-f="decor" value="${esc(p.decor)}" placeholder="No decor">
+        <span class="stepper"><span class="lbl">Affinity</span><button data-s="affinity" data-d="-1">−</button><span>${p.affinity||0}</span><button data-s="affinity" data-d="1">+</button></span>
+        <span class="stepper"><span class="lbl">Fruits</span><button data-s="fruits" data-d="-1">−</button><span>${p.fruits||0}</span><button data-s="fruits" data-d="1">+</button></span>
+      </div>
+      <div class="row">
+        ${p.released
+          ? `<button data-a="restore">Restore to active</button>`
+          : `<button data-a="release">Release</button>`}
+        <button class="danger" data-a="delete">${p._confirm?'Tap again to delete forever':'Delete'}</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/* ---------- events ---------- */
+document.addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b) return;
+  const card=b.closest('.p'); if(!card) return;
+  const id=card.dataset.id, p=items.find(x=>x.id===id); if(!p) return;
+  if(b.dataset.s){ patch(id,{[b.dataset.s]:Math.max(0,(+p[b.dataset.s]||0)+(+b.dataset.d))}); }
+  else if(b.dataset.a==='release') patch(id,{released:true,releasedAt:Date.now()});
+  else if(b.dataset.a==='restore') patch(id,{released:false,releasedAt:null});
+  else if(b.dataset.a==='delete') removeForever(id);
+});
+document.addEventListener('change',e=>{
+  const t=e.target, card=t.closest&&t.closest('.p'); if(!card||!t.dataset.f) return;
+  patch(card.dataset.id,{[t.dataset.f]:t.value.trim?t.value.trim():t.value});
+});
+$('addBtn').onclick=addPikmin;
+$('newName').addEventListener('keydown',e=>{ if(e.key==='Enter') addPikmin(); });
+$('tabActive').onclick=()=>{tab='active';render();};
+$('tabReleased').onclick=()=>{tab='released';render();};
+$('clearColor').onclick=()=>{colorFilter=null;render();};
+['q','fDecor','sort'].forEach(i=>$(i).addEventListener('input',render));
+
+/* ---------- backup ---------- */
+$('exportBtn').onclick=()=>{
+  try{
+    const blob=new Blob([JSON.stringify({app:'pikmin-tracker',version:1,items:items.map(({_confirm,...p})=>p)},null,2)],{type:'application/json'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='pikmin-tracker-'+new Date().toISOString().slice(0,10)+'.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    $('ioMsg').textContent='Exported '+items.length+' Pikmin.';
+  }catch(e){ $('ioMsg').textContent='Export not available here.'; }
+};
+$('importBtn').onclick=()=>$('importFile').click();
+$('importFile').onchange=async e=>{
+  const f=e.target.files[0]; if(!f) return;
+  try{
+    const data=JSON.parse(await f.text());
+    const arr=Array.isArray(data)?data:data.items;
+    if(!Array.isArray(arr)) throw new Error('bad');
+    let n=0;
+    arr.forEach(p=>{
+      if(!p||!p.id||!COLORS.some(c=>c.k===p.color)) return;
+      upsert({id:String(p.id),name:p.name||p.color,color:p.color,decor:p.decor||'',affinity:+p.affinity||0,fruits:+p.fruits||0,released:!!p.released,releasedAt:p.releasedAt||null,createdAt:p.createdAt||Date.now()});
+      n++;
+    });
+    $('ioMsg').textContent='Imported '+n+' Pikmin.';
+  }catch(err){ $('ioMsg').textContent='That file could not be read.'; }
+  e.target.value='';
+};
+
+/* ---------- init ---------- */
+$('newColor').innerHTML=COLORS.map(c=>`<option>${c.k}</option>`).join('');
+$('decors').innerHTML=DECORS.map(d=>`<option value="${d}">`).join('');
+render();
+
+(async function(){
+  let started=false;
+  const start=s=>{
+    if(started) return; started=true; store=s;
+    $('storeNote').textContent = s.kind==='db' ? 'Saved to your private cloud storage.' : 'Saved in this browser only (cloud storage unavailable).';
+    s.subscribe(arr=>{ items=arr; render(); });
+  };
+  // show the page immediately with local storage, upgrade to db if it answers
+  const timer=setTimeout(()=>start(makeLocalStore()), 10000);
+  const d=await makeDbStore();
+  clearTimeout(timer);
+  start(d||makeLocalStore());
+})();
+</script>
+</body>
+</html>
