@@ -38,6 +38,11 @@
   button{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 11px;cursor:pointer}
   button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
   button.danger{color:var(--danger)}
+  .pickrow{flex-basis:100%;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .pickrow .lbl{min-width:44px}
+  .pick{display:flex;flex-wrap:wrap;gap:6px}
+  .pick button{display:flex;align-items:center;gap:6px;padding:6px 11px;border-radius:999px}
+  .pick button.on{outline:2px solid var(--accent);background:var(--bg);font-weight:600}
   .tabs{display:flex;gap:6px;margin-bottom:10px}
   .tabs button.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
   .list{display:grid;gap:8px}
@@ -50,7 +55,8 @@
   .stepper{display:flex;align-items:center;gap:4px}
   .stepper button{padding:3px 9px}
   .stepper span{min-width:28px;text-align:center;font-weight:600}
-  .stepper .fruitin{width:64px;text-align:center;font-weight:600;padding:5px 4px}
+  .stepper .fruitin{width:64px;text-align:center;font-weight:600;padding:5px 4px;-moz-appearance:textfield;appearance:textfield}
+  .stepper .fruitin::-webkit-outer-spin-button,.stepper .fruitin::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
   .stepper .hearts{min-width:0;white-space:nowrap;font-weight:400}
   .stepper .hearts .h{min-width:0;font-size:18px;letter-spacing:1px}
   .stepper .hearts .tag{min-width:0}
@@ -76,8 +82,11 @@
 
   <div class="panel">
     <div class="row">
+      <div class="pickrow"><span class="lbl">Color</span><div class="pick" id="colorPick" role="radiogroup" aria-label="Color"></div></div>
+      <div class="pickrow"><span class="lbl">Decor</span><div class="pick" id="statusPick" role="radiogroup" aria-label="Decor status"></div></div>
+      <input type="hidden" id="newColor" value="Red">
+      <input type="hidden" id="newStatus" value="none">
       <input id="newName" placeholder="Name (optional)" style="flex:1;min-width:130px">
-      <select id="newColor"></select>
       <input id="newDecor" class="decor" list="decorlist" placeholder="Decor (type to search)" autocomplete="off" style="flex:1;min-width:150px">
       <span id="newExtras" class="row"></span>
       <button class="primary" id="addBtn">Add Pikmin</button>
@@ -101,9 +110,9 @@
     <input id="q" placeholder="Search name, decor, place, letter" style="flex:1;min-width:140px">
     <select id="fDecor">
       <option value="all">Any decor</option>
-      <option value="none">No decor</option>
-      <option value="has">Has decor</option>
-      <option value="rare">Rare only</option>
+      <option value="none">No decor yet</option>
+      <option value="has">Has decor (not rare)</option>
+      <option value="rare">Has rare decor</option>
     </select>
     <select id="sort">
       <option value="created">Newest first</option>
@@ -198,7 +207,10 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7
 const decorByName = n => catalog.find(d=>d.name===n);
 const categories = () => [...new Set(catalog.map(d=>d.category))];
 const catLabel = c => { const ds=catalog.filter(d=>d.category===c); return ds.length===1?ds[0].name:c; };
-const catOf = p => { if(!p.decor) return null; const d=decorByName(p.decor); return d?d.category:'Custom'; };
+// a Pikmin can be in a decor category without having its decor yet (pendCat)
+const PEND=' (no decor yet)';
+const catOf = p => { if(p.decor){ const d=decorByName(p.decor); return d?d.category:'Custom'; } return p.pendCat||null; };
+const displayDecor = p => p.decor || (p.pendCat ? p.pendCat+PEND : '');
 
 /* ---------- storage: db if available, localStorage fallback ---------- */
 function makeLocalStore(){
@@ -266,14 +278,26 @@ function readExtras(root, d){
 }
 function addPikmin(){
   const color=$('newColor').value;
-  const decor=resolveDecor($('newDecor').value);
-  if(decor===null){ $('addMsg').textContent='Pick a decor from the list, or add it under Manage decors.'; return; }
+  const rd=resolveDecor($('newDecor').value);
+  if(rd===null){ $('addMsg').textContent='Pick a decor from the list, or add it under Manage decors.'; return; }
+  const status=$('newStatus').value;
+  let decor='', pendCat='', ex={rare:false,place:'',letter:''};
+  if(status==='none'){
+    // no decor yet; if a decor or category was typed, remember the category
+    const dd=decorByName(rd.decor);
+    pendCat = dd ? dd.category : rd.pendCat;
+  } else {
+    const dd=decorByName(rd.decor);
+    if(!dd){ $('addMsg').textContent='Pick the decor this Pikmin has (or choose “No decor yet”).'; return; }
+    if(status==='rare' && !dd.rare){ $('addMsg').textContent=dd.name+' has no rare version yet. Turn on “Has rare” for it under Manage decors.'; return; }
+    decor=dd.name;
+    ex=readExtras($('newExtras'), dd);
+    ex.rare = status==='rare';
+  }
   $('addMsg').textContent='';
-  const d=decorByName(decor);
-  const ex=readExtras($('newExtras'), d);
   const n=$('newName').value.trim();
   const same=items.filter(x=>x.color===color).length+1;
-  upsert(Object.assign({id:uid(), name:n||(color+' '+same), color, decor, affinity:0, fruits:0, released:false, releasedAt:null, createdAt:Date.now()}, ex));
+  upsert(Object.assign({id:uid(), name:n||(color+' '+same), color, decor, pendCat, affinity:0, fruits:0, released:false, releasedAt:null, createdAt:Date.now()}, ex));
   $('newName').value='';
   $('newDecor').value='';
   refreshNewExtras();
@@ -283,6 +307,23 @@ function removeForever(id){
   if(!p._confirm){ patch(id,{_confirm:true}); setTimeout(()=>{ const q=items.find(x=>x.id===id); if(q&&q._confirm){ patch(id,{_confirm:false}); } },4000); return; }
   items=items.filter(x=>x.id!==id); store.remove(id); render();
 }
+
+/* ---------- add-form pickers (choose one) ---------- */
+const STATUSES=[['none','No decor yet'],['has','Has decor'],['rare','★ Has rare decor']];
+function renderPickers(){
+  const col=$('newColor').value, st=$('newStatus').value;
+  const btn=(attr,v,on,inner)=>`<button type="button" role="radio" aria-checked="${on}" class="${on?'on':''}" ${attr}="${esc(v)}">${inner}</button>`;
+  $('colorPick').innerHTML=COLORS.map(c=>btn('data-pc',c.k,c.k===col,`<span class="dot" style="background:${c.h}"></span>${c.k}`)).join('');
+  $('statusPick').innerHTML=STATUSES.map(([v,l])=>btn('data-ps',v,v===st,l)).join('');
+}
+$('colorPick').addEventListener('click',e=>{
+  const b=e.target.closest('[data-pc]'); if(!b) return;
+  $('newColor').value=b.dataset.pc; renderPickers();
+});
+$('statusPick').addEventListener('click',e=>{
+  const b=e.target.closest('[data-ps]'); if(!b) return;
+  $('newStatus').value=b.dataset.ps; renderPickers(); refreshNewExtras();
+});
 
 /* ---------- hearts ---------- */
 // affinity level 0-8: 0-4 = red hearts filling up; 5-8 = red full, 1-4 yellow hearts (1 yellow = 4 red)
@@ -301,25 +342,30 @@ function hearts(level){
 /* ---------- decor UI pieces ---------- */
 // searchable decor input: typing filters the list (matches decor name or category)
 function decorListHtml(){
-  return catalog.map(d=>`<option value="${esc(d.name)}" label="${esc(d.category)}"></option>`).join('');
+  return catalog.map(d=>`<option value="${esc(d.name)}" label="${esc(d.category)}"></option>`).join('')
+    + categories().map(c=>`<option value="${esc(c+PEND)}" label="Category only"></option>`).join('');
 }
-// '' = no decor, name = matched catalog decor (case-insensitive), null = not in the list
+// -> {decor, pendCat}: empty = no decor; decor = matched catalog decor; pendCat = in that category, decor not obtained yet; null = not in the list
 function resolveDecor(v){
-  const k=(v||'').trim(); if(!k) return '';
-  const d=catalog.find(x=>x.name.toLowerCase()===k.toLowerCase());
-  return d?d.name:null;
+  const k=(v||'').trim(); if(!k) return {decor:'',pendCat:''};
+  const low=k.toLowerCase();
+  const d=catalog.find(x=>x.name.toLowerCase()===low);
+  if(d) return {decor:d.name,pendCat:''};
+  const c=categories().find(x=>x.toLowerCase()===low || (x+PEND).toLowerCase()===low);
+  if(c) return {decor:'',pendCat:c};
+  return null;
 }
-function extrasHtml(d,p){
+function extrasHtml(d,p,noRare){
   if(!d) return '';
   let h='';
-  if(d.rare) h+=`<label class="chk"><input type="checkbox" data-f="rare" ${p.rare?'checked':''}> Rare</label>`;
+  if(d.rare&&!noRare) h+=`<label class="chk"><input type="checkbox" data-f="rare" ${p.rare?'checked':''}> Rare decor</label>`;
   if(d.place) h+=`<input data-f="place" value="${esc(p.place)}" placeholder="Place name" style="width:150px">`;
   if(d.letter) h+=`<input data-f="letter" value="${esc(p.letter)}" placeholder="Letter" maxlength="3" style="width:70px">`;
   return h;
 }
 function refreshNewExtras(){
   const r=resolveDecor($('newDecor').value);
-  $('newExtras').innerHTML = r ? extrasHtml(decorByName(r), {}) : '';
+  $('newExtras').innerHTML = r&&r.decor&&$('newStatus').value!=='none' ? extrasHtml(decorByName(r.decor), {}, true) : '';
 }
 function refreshDecorUi(){
   $('decorlist').innerHTML=decorListHtml();
@@ -413,28 +459,33 @@ $('manageBtn').onclick=()=>{ manageOpen=!manageOpen; renderManage(); if(manageOp
 /* ---------- render ---------- */
 function render(){
   const active=items.filter(p=>!p.released), rel=items.filter(p=>p.released);
-  const withDecor=active.filter(p=>p.decor).length;
+  // every Pikmin is in exactly one state: no decor yet / has decor / has rare decor
+  const noneN=active.filter(p=>!p.decor).length;
+  const plainN=active.filter(p=>p.decor&&!p.rare).length;
+  const rareN=active.filter(p=>p.decor&&p.rare).length;
   const sum=(a,k)=>a.reduce((s,p)=>s+(+p[k]||0),0);
   $('stats').innerHTML = [
-    ['Active',active.length],['Released',rel.length],['With decor',withDecor],
-    ['No decor',active.length-withDecor],['Rare',active.filter(p=>p.rare).length],['Total fruits',sum(items,'fruits')]
+    ['Active',active.length],['Released',rel.length],['No decor yet',noneN],
+    ['Has decor',plainN],['Has rare decor',rareN],['Total fruits',sum(items,'fruits')]
   ].map(([l,v])=>`<div class="stat"><b>${v}</b><span>${l}</span></div>`).join('');
 
   const pool = tab==='active'?active:rel;
   $('colors').innerHTML = COLORS.map(c=>{
     const a=pool.filter(p=>p.color===c.k);
-    const d=a.filter(p=>p.decor).length;
-    return `<button class="chip ${colorFilter===c.k?'on':''}" data-c="${c.k}"><span class="dot" style="background:${c.h}"></span><span><b>${a.length}</b> ${c.k}<small>${d} decor · ${a.length-d} plain</small></span></button>`;
+    const d=a.filter(p=>p.decor&&!p.rare).length;
+    const rr=a.filter(p=>p.decor&&p.rare).length;
+    const ne=a.filter(p=>!p.decor).length;
+    return `<button class="chip ${colorFilter===c.k?'on':''}" data-c="${c.k}"><span class="dot" style="background:${c.h}"></span><span><b>${a.length}</b> ${c.k}<small>${ne} none · ${d} decor · ${rr} rare</small></span></button>`;
   }).join('');
   $('colors').querySelectorAll('.chip').forEach(b=>b.onclick=()=>{ colorFilter = colorFilter===b.dataset.c?null:b.dataset.c; render(); });
 
   // decor category tally (only categories that have Pikmin in this tab)
   const tally={};
-  pool.forEach(p=>{ const k=catOf(p); if(!k) return; (tally[k]=tally[k]||{n:0,r:0}).n++; if(p.rare) tally[k].r++; });
-  const order=categories().concat(['Custom']).filter(k=>tally[k]);
+  pool.forEach(p=>{ const k=catOf(p); if(!k) return; (tally[k]=tally[k]||{n:0,r:0,w:0}).n++; if(p.rare) tally[k].r++; if(!p.decor) tally[k].w++; });
+  const order=categories().concat(Object.keys(tally).filter(k=>!categories().includes(k))).filter(k=>tally[k]);
   $('cats').innerHTML = order.length ? order.map(k=>{
     const t=tally[k];
-    return `<button class="chip sm ${catFilter===k?'on':''}" data-k="${esc(k)}"><span>${esc(k==='Custom'?'Custom':catLabel(k))}</span><span><b>${t.n}</b>${t.r?` <small style="display:inline">(${t.r} rare)</small>`:''}</span></button>`;
+    return `<button class="chip sm ${catFilter===k?'on':''}" data-k="${esc(k)}"><span>${esc(k==='Custom'?'Custom':catLabel(k))}</span><span><b>${t.n}</b>${t.r?` <small style="display:inline">(${t.r} rare)</small>`:''}${t.w?` <small style="display:inline">(${t.w} not yet)</small>`:''}</span></button>`;
   }).join('') : `<div class="tag">No decor Pikmin here yet.</div>`;
   $('cats').querySelectorAll('.chip').forEach(b=>b.onclick=()=>{ catFilter = catFilter===b.dataset.k?null:b.dataset.k; render(); });
 
@@ -446,8 +497,8 @@ function render(){
   const q=$('q').value.trim().toLowerCase(), fd=$('fDecor').value, so=$('sort').value;
   let list=pool.filter(p=>(!colorFilter||p.color===colorFilter)
     && (!catFilter||catOf(p)===catFilter)
-    && (fd==='all'||(fd==='none'?!p.decor:fd==='has'?!!p.decor:!!p.rare))
-    && (!q||[p.name,p.decor,p.place,p.letter].some(s=>(s||'').toLowerCase().includes(q))));
+    && (fd==='all'||(fd==='none'?!p.decor:fd==='has'?(!!p.decor&&!p.rare):(!!p.decor&&!!p.rare)))
+    && (!q||[p.name,p.decor,p.pendCat,p.place,p.letter].some(s=>(s||'').toLowerCase().includes(q))));
   const ci=k=>COLORS.findIndex(c=>c.k===k);
   list.sort((a,b)=> so==='name'?(a.name||'').localeCompare(b.name||'')
     : so==='color'?ci(a.color)-ci(b.color)
@@ -460,7 +511,7 @@ function render(){
     const colorOpts=COLORS.map(c=>`<option ${c.k===p.color?'selected':''}>${c.k}</option>`).join('');
     const relInfo=p.released?`<span class="tag">Released ${p.releasedAt?new Date(p.releasedAt).toLocaleDateString():''}</span>`:'';
     const d=decorByName(p.decor);
-    const badge=p.rare?`<span class="badge">★ Rare</span>`:'';
+    const badge=!p.decor?`<span class="tag">⏳ no decor yet</span>`:(p.rare?`<span class="badge">★ Rare decor</span>`:`<span class="tag">✓ has decor</span>`);
     return `<div class="p ${p.released?'rel':''}" data-id="${p.id}">
       <div class="top">
         <span class="dot" style="background:${cHex(p.color)};width:20px;height:20px"></span>
@@ -469,7 +520,7 @@ function render(){
       </div>
       <div class="meta">
         <select data-f="color">${colorOpts}</select>
-        <input class="decor" data-f="decor" list="decorlist" value="${esc(p.decor)}" placeholder="No decor (type to search)" autocomplete="off" style="flex:1;min-width:150px">
+        <input class="decor" data-f="decor" list="decorlist" value="${esc(displayDecor(p))}" placeholder="No decor (type to search)" autocomplete="off" style="flex:1;min-width:150px">
         ${extrasHtml(d,p)}
       </div>
       <div class="meta">
@@ -501,15 +552,17 @@ document.addEventListener('change',e=>{
   const card=t.closest('.p'); if(!card) return;
   const id=card.dataset.id, f=t.dataset.f, cur=items.find(x=>x.id===id); if(!cur) return;
   if(f==='decor'){
-    const r = t.value.trim()===(cur.decor||'') ? (cur.decor||'') : resolveDecor(t.value);
+    if(t.value.trim()===displayDecor(cur)) return;
+    const r = resolveDecor(t.value);
     if(r===null){ render(); return; }
-    const d=decorByName(r);
-    patch(id,{decor:r, rare:!!(d&&d.rare&&cur.rare), place:d&&d.place?(cur.place||''):'', letter:d&&d.letter?(cur.letter||''):''});
+    const d=decorByName(r.decor);
+    patch(id,{decor:r.decor, pendCat:r.pendCat, rare:!!(d&&d.rare&&cur.rare), place:d&&d.place?(cur.place||''):'', letter:d&&d.letter?(cur.letter||''):''});
   } else if(f==='rare'){ patch(id,{rare:t.checked}); }
   else if(f==='letter'){ patch(id,{letter:t.value.trim().toUpperCase()}); }
   else if(f==='fruits'){ patch(id,{fruits:Math.max(0,Math.floor(+t.value)||0)}); }
   else { patch(id,{[f]:t.value.trim()}); }
 });
+$('newStatus').addEventListener('change',refreshNewExtras);
 $('newDecor').addEventListener('input',refreshNewExtras);
 $('newDecor').addEventListener('change',refreshNewExtras);
 $('addBtn').onclick=addPikmin;
@@ -544,7 +597,7 @@ $('importFile').onchange=async e=>{
     let n=0;
     arr.forEach(p=>{
       if(!p||!p.id||!COLORS.some(c=>c.k===p.color)) return;
-      upsert({id:String(p.id),name:p.name||p.color,color:p.color,decor:p.decor||'',rare:!!p.rare,place:p.place||'',letter:p.letter||'',affinity:Math.min(8,Math.max(0,+p.affinity||0)),fruits:+p.fruits||0,released:!!p.released,releasedAt:p.releasedAt||null,createdAt:p.createdAt||Date.now()});
+      upsert({id:String(p.id),name:p.name||p.color,color:p.color,decor:p.decor||'',pendCat:p.pendCat||'',rare:!!p.rare,place:p.place||'',letter:p.letter||'',affinity:Math.min(8,Math.max(0,+p.affinity||0)),fruits:+p.fruits||0,released:!!p.released,releasedAt:p.releasedAt||null,createdAt:p.createdAt||Date.now()});
       n++;
     });
     $('ioMsg').textContent='Imported '+n+' Pikmin.';
@@ -553,7 +606,7 @@ $('importFile').onchange=async e=>{
 };
 
 /* ---------- init ---------- */
-$('newColor').innerHTML=COLORS.map(c=>`<option>${c.k}</option>`).join('');
+renderPickers();
 refreshDecorUi();
 render();
 
