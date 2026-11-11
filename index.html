@@ -12,6 +12,7 @@
     :root{ --bg:#141a14; --card:#1d261d; --ink:#e8efe6; --muted:#97a597; --line:#2c382c; --accent:#5bb06c; --accent-ink:#0d150d; --danger:#e06a63; }
   }
   *{box-sizing:border-box}
+  [hidden]{display:none !important}
   body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
   .wrap{max-width:900px;margin:0 auto;padding:16px 14px 80px}
   h1{font-size:20px;margin:6px 0 14px}
@@ -60,7 +61,7 @@
   .chk{display:flex;align-items:center;gap:4px;font-size:13px;white-space:nowrap}
   .mrow{padding:4px 0;border-top:1px solid var(--line)}
   .mrow input[type=text],.mrow input:not([type]){flex:1;min-width:110px}
-  @media(max-width:520px){ select.decor{width:100%} }
+  @media(max-width:520px){ input.decor{width:100%} }
 </style>
 </head>
 <body>
@@ -76,17 +77,19 @@
     <div class="row">
       <input id="newName" placeholder="Name (optional)" style="flex:1;min-width:130px">
       <select id="newColor"></select>
-      <select id="newDecor" class="decor" style="flex:1;min-width:150px"></select>
+      <input id="newDecor" class="decor" list="decorlist" placeholder="Decor (type to search)" autocomplete="off" style="flex:1;min-width:150px">
       <span id="newExtras" class="row"></span>
       <button class="primary" id="addBtn">Add Pikmin</button>
     </div>
     <div class="row" style="margin-top:8px">
       <button id="manageBtn">Manage decors / add new decor</button>
+      <span class="tag" id="addMsg"></span>
     </div>
   </div>
 
   <div class="panel" id="manage" hidden></div>
   <datalist id="catlist"></datalist>
+  <datalist id="decorlist"></datalist>
 
   <div class="tabs">
     <button id="tabActive" class="on">Active</button>
@@ -262,7 +265,9 @@ function readExtras(root, d){
 }
 function addPikmin(){
   const color=$('newColor').value;
-  const decor=$('newDecor').value;
+  const decor=resolveDecor($('newDecor').value);
+  if(decor===null){ $('addMsg').textContent='Pick a decor from the list, or add it under Manage decors.'; return; }
+  $('addMsg').textContent='';
   const d=decorByName(decor);
   const ex=readExtras($('newExtras'), d);
   const n=$('newName').value.trim();
@@ -293,16 +298,15 @@ function hearts(level){
 }
 
 /* ---------- decor UI pieces ---------- */
-function decorOptions(sel){
-  const opt=d=>`<option value="${esc(d.name)}" ${d.name===sel?'selected':''}>${esc(d.name)}</option>`;
-  let h=`<option value="">No decor</option>`;
-  if(sel && !decorByName(sel)) h+=`<option value="${esc(sel)}" selected>${esc(sel)} (custom)</option>`;
-  categories().forEach(c=>{
-    const ds=catalog.filter(d=>d.category===c);
-    if(ds.length===1) h+=opt(ds[0]);
-    else h+=`<optgroup label="${esc(c)}">${ds.map(opt).join('')}</optgroup>`;
-  });
-  return h;
+// searchable decor input: typing filters the list (matches decor name or category)
+function decorListHtml(){
+  return catalog.map(d=>`<option value="${esc(d.name)}" label="${esc(d.category)}"></option>`).join('');
+}
+// '' = no decor, name = matched catalog decor (case-insensitive), null = not in the list
+function resolveDecor(v){
+  const k=(v||'').trim(); if(!k) return '';
+  const d=catalog.find(x=>x.name.toLowerCase()===k.toLowerCase());
+  return d?d.name:null;
 }
 function extrasHtml(d,p){
   if(!d) return '';
@@ -313,12 +317,11 @@ function extrasHtml(d,p){
   return h;
 }
 function refreshNewExtras(){
-  $('newExtras').innerHTML = extrasHtml(decorByName($('newDecor').value), {});
+  const r=resolveDecor($('newDecor').value);
+  $('newExtras').innerHTML = r ? extrasHtml(decorByName(r), {}) : '';
 }
 function refreshDecorUi(){
-  const cur=$('newDecor').value;
-  $('newDecor').innerHTML=decorOptions(cur);
-  $('newDecor').value = decorByName(cur)?cur:'';
+  $('decorlist').innerHTML=decorListHtml();
   refreshNewExtras();
   $('catlist').innerHTML=categories().map(c=>`<option value="${esc(c)}">`).join('');
   renderManage();
@@ -329,7 +332,7 @@ function renderManage(){
   const el=$('manage');
   el.hidden=!manageOpen;
   if(!manageOpen) return;
-  const row=(d,i)=>`<div class="row mrow" data-ci="${i}">
+  const row=(d,i)=>`<div class="row mrow" data-ci="${i}" data-s="${esc((d.name+' '+d.category).toLowerCase())}">
       <input data-cf="name" value="${esc(d.name)}" placeholder="Decor name">
       <input data-cf="category" list="catlist" value="${esc(d.category)}" placeholder="Category">
       <label class="chk"><input type="checkbox" data-cf="rare" ${d.rare?'checked':''}> Has rare</label>
@@ -349,10 +352,20 @@ function renderManage(){
       <button class="primary" id="mAdd">Add decor</button>
     </div>
     <div class="tag" id="mMsg"></div>
-    <h2>All decors</h2>`;
-  h+=categories().map(c=>`<div class="lbl" style="margin:10px 0 2px"><b>${esc(c)}</b></div>`+catalog.map((d,i)=>d.category===c?row(d,i):'').join('')).join('');
+    <h2>All decors</h2>
+    <input id="mSearch" placeholder="Search decors or categories" autocomplete="off" style="width:100%;margin-bottom:6px">`;
+  h+=categories().map(c=>`<div class="mgroup"><div class="lbl" style="margin:10px 0 2px"><b>${esc(c)}</b></div>`+catalog.map((d,i)=>d.category===c?row(d,i):'').join('')+`</div>`).join('');
   el.innerHTML=h;
 }
+$('manage').addEventListener('input',e=>{
+  if(e.target.id!=='mSearch') return;
+  const q=e.target.value.trim().toLowerCase();
+  $('manage').querySelectorAll('.mgroup').forEach(g=>{
+    let any=false;
+    g.querySelectorAll('.mrow').forEach(r=>{ const show=!q||r.dataset.s.includes(q); r.hidden=!show; any=any||show; });
+    g.hidden=!any;
+  });
+});
 function canonCat(c){
   const k=c.trim(); if(!k) return '';
   return categories().find(x=>x.toLowerCase()===k.toLowerCase()) || k;
@@ -455,7 +468,7 @@ function render(){
       </div>
       <div class="meta">
         <select data-f="color">${colorOpts}</select>
-        <select class="decor" data-f="decor">${decorOptions(p.decor)}</select>
+        <input class="decor" data-f="decor" list="decorlist" value="${esc(p.decor)}" placeholder="No decor (type to search)" autocomplete="off" style="flex:1;min-width:150px">
         ${extrasHtml(d,p)}
       </div>
       <div class="meta">
@@ -487,12 +500,15 @@ document.addEventListener('change',e=>{
   const card=t.closest('.p'); if(!card) return;
   const id=card.dataset.id, f=t.dataset.f, cur=items.find(x=>x.id===id); if(!cur) return;
   if(f==='decor'){
-    const d=decorByName(t.value);
-    patch(id,{decor:t.value, rare:!!(d&&d.rare&&cur.rare), place:d&&d.place?(cur.place||''):'', letter:d&&d.letter?(cur.letter||''):''});
+    const r = t.value.trim()===(cur.decor||'') ? (cur.decor||'') : resolveDecor(t.value);
+    if(r===null){ render(); return; }
+    const d=decorByName(r);
+    patch(id,{decor:r, rare:!!(d&&d.rare&&cur.rare), place:d&&d.place?(cur.place||''):'', letter:d&&d.letter?(cur.letter||''):''});
   } else if(f==='rare'){ patch(id,{rare:t.checked}); }
   else if(f==='letter'){ patch(id,{letter:t.value.trim().toUpperCase()}); }
   else { patch(id,{[f]:t.value.trim()}); }
 });
+$('newDecor').addEventListener('input',refreshNewExtras);
 $('newDecor').addEventListener('change',refreshNewExtras);
 $('addBtn').onclick=addPikmin;
 $('newName').addEventListener('keydown',e=>{ if(e.key==='Enter') addPikmin(); });
