@@ -50,6 +50,7 @@
   .stepper{display:flex;align-items:center;gap:4px}
   .stepper button{padding:3px 9px}
   .stepper span{min-width:28px;text-align:center;font-weight:600}
+  .stepper .fruitin{width:64px;text-align:center;font-weight:600;padding:5px 4px}
   .stepper .hearts{min-width:0;white-space:nowrap;font-weight:400}
   .stepper .hearts .h{min-width:0;font-size:18px;letter-spacing:1px}
   .stepper .hearts .tag{min-width:0}
@@ -473,7 +474,7 @@ function render(){
       </div>
       <div class="meta">
         <span class="stepper"><span class="lbl">Affinity</span><button data-s="affinity" data-d="-1">−</button><span class="hearts">${hearts(p.affinity)}</span><button data-s="affinity" data-d="1">+</button></span>
-        <span class="stepper"><span class="lbl">Fruits</span><button data-s="fruits" data-d="-1">−</button><span>${p.fruits||0}</span><button data-s="fruits" data-d="1">+</button></span>
+        <span class="stepper"><span class="lbl">Fruits</span><button data-s="fruits" data-d="-1">−</button><input type="number" inputmode="numeric" min="0" step="1" class="fruitin" data-f="fruits" value="${p.fruits||0}" aria-label="Fruits"><button data-s="fruits" data-d="1">+</button></span>
       </div>
       <div class="row">
         ${p.released
@@ -506,6 +507,7 @@ document.addEventListener('change',e=>{
     patch(id,{decor:r, rare:!!(d&&d.rare&&cur.rare), place:d&&d.place?(cur.place||''):'', letter:d&&d.letter?(cur.letter||''):''});
   } else if(f==='rare'){ patch(id,{rare:t.checked}); }
   else if(f==='letter'){ patch(id,{letter:t.value.trim().toUpperCase()}); }
+  else if(f==='fruits'){ patch(id,{fruits:Math.max(0,Math.floor(+t.value)||0)}); }
   else { patch(id,{[f]:t.value.trim()}); }
 });
 $('newDecor').addEventListener('input',refreshNewExtras);
