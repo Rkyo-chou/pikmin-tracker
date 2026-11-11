@@ -344,8 +344,7 @@ function hearts(level){
 /* ---------- decor UI pieces ---------- */
 // searchable decor input: typing filters the list (matches decor name or category)
 function decorListHtml(){
-  return catalog.map(d=>`<option value="${esc(d.name)}" label="${esc(d.category)}"></option>`).join('')
-    + categories().map(c=>`<option value="${esc(c+PEND)}" label="Category only"></option>`).join('');
+  return catalog.map(d=>`<option value="${esc(d.name)}" label="${esc(d.category)}"></option>`).join('');
 }
 // -> {decor, pendCat}: empty = no decor; decor = matched catalog decor; pendCat = in that category, decor not obtained yet; null = not in the list
 function resolveDecor(v){
