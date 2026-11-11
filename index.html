@@ -43,6 +43,10 @@
   .pick{display:flex;flex-wrap:wrap;gap:6px}
   .pick button{display:flex;align-items:center;gap:6px;padding:6px 11px;border-radius:999px}
   .pick button.on{outline:2px solid var(--accent);background:var(--bg);font-weight:600}
+  .p .pick button{padding:4px 10px;font-size:13px}
+  .pager{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin:8px 0}
+  .pager:empty{display:none}
+  button:disabled{opacity:.4;cursor:default}
   .tabs{display:flex;gap:6px;margin-bottom:10px}
   .tabs button.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
   .list{display:grid;gap:8px}
@@ -87,7 +91,7 @@
       <input type="hidden" id="newColor" value="Red">
       <input type="hidden" id="newStatus" value="none">
       <input id="newName" placeholder="Name (optional)" style="flex:1;min-width:130px">
-      <input id="newDecor" class="decor" list="decorlist" placeholder="Decor (type to search)" autocomplete="off" style="flex:1;min-width:150px">
+      <input id="newDecor" class="decor" list="decorlist" placeholder="Decor or category (type to search)" autocomplete="off" style="flex:1;min-width:150px">
       <span id="newExtras" class="row"></span>
       <button class="primary" id="addBtn">Add Pikmin</button>
     </div>
@@ -124,7 +128,9 @@
     <button id="clearFilters">Clear filters</button>
   </div>
 
+  <div class="pager" id="pagerTop"></div>
   <div class="list" id="list"></div>
+  <div class="pager" id="pagerBot"></div>
 
   <div class="panel row" style="margin-top:14px">
     <button id="exportBtn">Export backup</button>
@@ -194,6 +200,8 @@ let catalog = DEFAULT_CATALOG.map(mkDecor);
 let tab = 'active';
 let colorFilter = null;
 let catFilter = null;
+let page = 1, lastPage = 1, pageSize = 25;
+try{ const ps=+localStorage.getItem('pikminTracker.pageSize'); if([25,50,100].includes(ps)) pageSize=ps; }catch(e){}
 let manageOpen = false;
 let delConfirm = -1;
 let store = null;
@@ -210,6 +218,8 @@ const catLabel = c => { const ds=catalog.filter(d=>d.category===c); return ds.le
 // a Pikmin can be in a decor category without having its decor yet (pendCat)
 const PEND=' (no decor yet)';
 const catOf = p => { if(p.decor){ const d=decorByName(p.decor); return d?d.category:'Custom'; } return p.pendCat||null; };
+// decor status: 'none' (no decor yet) / 'has' / 'rare'. Older saved Pikmin without a status are derived once.
+const statusOf = p => ['none','has','rare'].includes(p.status) ? p.status : (!p.decor ? 'none' : (p.rare ? 'rare' : 'has'));
 const displayDecor = p => p.decor || (p.pendCat ? p.pendCat+PEND : '');
 
 /* ---------- storage: db if available, localStorage fallback ---------- */
@@ -263,6 +273,8 @@ function patch(id, ch){
   const p=items.find(x=>x.id===id); if(!p) return;
   upsert(Object.assign({}, p, ch));
 }
+// the decor box (which decor/category) and the decor status (none / has / rare) are independent
+function setStatus(id,st){ patch(id,{status:st}); }
 function saveCatalog(){
   store.save({id:'__catalog',kind:'catalog',decors:catalog});
   refreshDecorUi();
@@ -271,7 +283,6 @@ function saveCatalog(){
 function readExtras(root, d){
   const g=f=>root.querySelector('[data-f="'+f+'"]');
   return {
-    rare: !!(d&&d.rare&&g('rare')&&g('rare').checked),
     place: d&&d.place&&g('place') ? g('place').value.trim() : '',
     letter: d&&d.letter&&g('letter') ? g('letter').value.trim().toUpperCase() : ''
   };
@@ -281,23 +292,12 @@ function addPikmin(){
   const rd=resolveDecor($('newDecor').value);
   if(rd===null){ $('addMsg').textContent='Pick a decor from the list, or add it under Manage decors.'; return; }
   const status=$('newStatus').value;
-  let decor='', pendCat='', ex={rare:false,place:'',letter:''};
-  if(status==='none'){
-    // no decor yet; if a decor or category was typed, remember the category
-    const dd=decorByName(rd.decor);
-    pendCat = dd ? dd.category : rd.pendCat;
-  } else {
-    const dd=decorByName(rd.decor);
-    if(!dd){ $('addMsg').textContent='Pick the decor this Pikmin has (or choose “No decor yet”).'; return; }
-    if(status==='rare' && !dd.rare){ $('addMsg').textContent=dd.name+' has no rare version yet. Turn on “Has rare” for it under Manage decors.'; return; }
-    decor=dd.name;
-    ex=readExtras($('newExtras'), dd);
-    ex.rare = status==='rare';
-  }
+  const decor=rd.decor, pendCat=rd.pendCat;
+  const ex=readExtras($('newExtras'), decorByName(decor));
   $('addMsg').textContent='';
   const n=$('newName').value.trim();
   const same=items.filter(x=>x.color===color).length+1;
-  upsert(Object.assign({id:uid(), name:n||(color+' '+same), color, decor, pendCat, affinity:0, fruits:0, released:false, releasedAt:null, createdAt:Date.now()}, ex));
+  upsert(Object.assign({id:uid(), name:n||(color+' '+same), color, decor, pendCat, status, affinity:0, fruits:0, released:false, releasedAt:null, createdAt:Date.now()}, ex));
   $('newName').value='';
   $('newDecor').value='';
   refreshNewExtras();
@@ -355,17 +355,16 @@ function resolveDecor(v){
   if(c) return {decor:'',pendCat:c};
   return null;
 }
-function extrasHtml(d,p,noRare){
+function extrasHtml(d,p){
   if(!d) return '';
   let h='';
-  if(d.rare&&!noRare) h+=`<label class="chk"><input type="checkbox" data-f="rare" ${p.rare?'checked':''}> Rare decor</label>`;
   if(d.place) h+=`<input data-f="place" value="${esc(p.place)}" placeholder="Place name" style="width:150px">`;
   if(d.letter) h+=`<input data-f="letter" value="${esc(p.letter)}" placeholder="Letter" maxlength="3" style="width:70px">`;
   return h;
 }
 function refreshNewExtras(){
   const r=resolveDecor($('newDecor').value);
-  $('newExtras').innerHTML = r&&r.decor&&$('newStatus').value!=='none' ? extrasHtml(decorByName(r.decor), {}, true) : '';
+  $('newExtras').innerHTML = r&&r.decor ? extrasHtml(decorByName(r.decor), {}) : '';
 }
 function refreshDecorUi(){
   $('decorlist').innerHTML=decorListHtml();
@@ -382,18 +381,16 @@ function renderManage(){
   const row=(d,i)=>`<div class="row mrow" data-ci="${i}" data-s="${esc((d.name+' '+d.category).toLowerCase())}">
       <input data-cf="name" value="${esc(d.name)}" placeholder="Decor name">
       <input data-cf="category" list="catlist" value="${esc(d.category)}" placeholder="Category">
-      <label class="chk"><input type="checkbox" data-cf="rare" ${d.rare?'checked':''}> Has rare</label>
       <label class="chk"><input type="checkbox" data-cf="place" ${d.place?'checked':''}> Place</label>
       <label class="chk"><input type="checkbox" data-cf="letter" ${d.letter?'checked':''}> Letter</label>
       <button class="danger" data-del="${i}">${delConfirm===i?'Tap again to delete':'Delete'}</button>
     </div>`;
   let h=`<div class="row"><b>Manage decors</b><button id="mClose" style="margin-left:auto">Close</button></div>
-    <div class="note">“Has rare” lets a Pikmin of that decor be marked Rare. “Place” and “Letter” add those fields (airports, stations, schools, roadside stickers).</div>
+    <div class="note">“Place” and “Letter” add those fields to a Pikmin with that decor (airports, stations, schools, roadside stickers).</div>
     <h2>Add new decor (monthly themes, etc.)</h2>
     <div class="row">
       <input id="mName" placeholder="Decor name" style="flex:1;min-width:120px">
       <input id="mCat" list="catlist" placeholder="Category (existing or new)" style="flex:1;min-width:140px">
-      <label class="chk"><input type="checkbox" id="mRare"> Has rare</label>
       <label class="chk"><input type="checkbox" id="mPlace"> Place</label>
       <label class="chk"><input type="checkbox" id="mLetter"> Letter</label>
       <button class="primary" id="mAdd">Add decor</button>
@@ -424,7 +421,7 @@ $('manage').addEventListener('click',e=>{
     const name=$('mName').value.trim(), cat=canonCat($('mCat').value);
     if(!name||!cat){ $('mMsg').textContent='Enter a decor name and a category.'; return; }
     if(decorByName(name)){ $('mMsg').textContent='That decor already exists.'; return; }
-    catalog=catalog.concat([{category:cat,name,rare:$('mRare').checked,place:$('mPlace').checked,letter:$('mLetter').checked}]);
+    catalog=catalog.concat([{category:cat,name,rare:false,place:$('mPlace').checked,letter:$('mLetter').checked}]);
     saveCatalog();
     return;
   }
@@ -459,10 +456,10 @@ $('manageBtn').onclick=()=>{ manageOpen=!manageOpen; renderManage(); if(manageOp
 /* ---------- render ---------- */
 function render(){
   const active=items.filter(p=>!p.released), rel=items.filter(p=>p.released);
-  // every Pikmin is in exactly one state: no decor yet / has decor / has rare decor
-  const noneN=active.filter(p=>!p.decor).length;
-  const plainN=active.filter(p=>p.decor&&!p.rare).length;
-  const rareN=active.filter(p=>p.decor&&p.rare).length;
+  // status is independent of which decor/category is chosen: no decor yet / has decor / has rare decor
+  const noneN=active.filter(p=>statusOf(p)==='none').length;
+  const plainN=active.filter(p=>statusOf(p)==='has').length;
+  const rareN=active.filter(p=>statusOf(p)==='rare').length;
   const sum=(a,k)=>a.reduce((s,p)=>s+(+p[k]||0),0);
   $('stats').innerHTML = [
     ['Active',active.length],['Released',rel.length],['No decor yet',noneN],
@@ -472,22 +469,22 @@ function render(){
   const pool = tab==='active'?active:rel;
   $('colors').innerHTML = COLORS.map(c=>{
     const a=pool.filter(p=>p.color===c.k);
-    const d=a.filter(p=>p.decor&&!p.rare).length;
-    const rr=a.filter(p=>p.decor&&p.rare).length;
-    const ne=a.filter(p=>!p.decor).length;
+    const d=a.filter(p=>statusOf(p)==='has').length;
+    const rr=a.filter(p=>statusOf(p)==='rare').length;
+    const ne=a.filter(p=>statusOf(p)==='none').length;
     return `<button class="chip ${colorFilter===c.k?'on':''}" data-c="${c.k}"><span class="dot" style="background:${c.h}"></span><span><b>${a.length}</b> ${c.k}<small>${ne} none · ${d} decor · ${rr} rare</small></span></button>`;
   }).join('');
-  $('colors').querySelectorAll('.chip').forEach(b=>b.onclick=()=>{ colorFilter = colorFilter===b.dataset.c?null:b.dataset.c; render(); });
+  $('colors').querySelectorAll('.chip').forEach(b=>b.onclick=()=>{ colorFilter = colorFilter===b.dataset.c?null:b.dataset.c; page=1; render(); });
 
   // decor category tally (only categories that have Pikmin in this tab)
   const tally={};
-  pool.forEach(p=>{ const k=catOf(p); if(!k) return; (tally[k]=tally[k]||{n:0,r:0,w:0}).n++; if(p.rare) tally[k].r++; if(!p.decor) tally[k].w++; });
+  pool.forEach(p=>{ const k=catOf(p); if(!k) return; (tally[k]=tally[k]||{n:0,r:0,w:0}).n++; if(statusOf(p)==='rare') tally[k].r++; if(statusOf(p)==='none') tally[k].w++; });
   const order=categories().concat(Object.keys(tally).filter(k=>!categories().includes(k))).filter(k=>tally[k]);
   $('cats').innerHTML = order.length ? order.map(k=>{
     const t=tally[k];
     return `<button class="chip sm ${catFilter===k?'on':''}" data-k="${esc(k)}"><span>${esc(k==='Custom'?'Custom':catLabel(k))}</span><span><b>${t.n}</b>${t.r?` <small style="display:inline">(${t.r} rare)</small>`:''}${t.w?` <small style="display:inline">(${t.w} not yet)</small>`:''}</span></button>`;
   }).join('') : `<div class="tag">No decor Pikmin here yet.</div>`;
-  $('cats').querySelectorAll('.chip').forEach(b=>b.onclick=()=>{ catFilter = catFilter===b.dataset.k?null:b.dataset.k; render(); });
+  $('cats').querySelectorAll('.chip').forEach(b=>b.onclick=()=>{ catFilter = catFilter===b.dataset.k?null:b.dataset.k; page=1; render(); });
 
   $('tabActive').className = tab==='active'?'on':'';
   $('tabReleased').className = tab==='released'?'on':'';
@@ -497,7 +494,7 @@ function render(){
   const q=$('q').value.trim().toLowerCase(), fd=$('fDecor').value, so=$('sort').value;
   let list=pool.filter(p=>(!colorFilter||p.color===colorFilter)
     && (!catFilter||catOf(p)===catFilter)
-    && (fd==='all'||(fd==='none'?!p.decor:fd==='has'?(!!p.decor&&!p.rare):(!!p.decor&&!!p.rare)))
+    && (fd==='all'||statusOf(p)===fd)
     && (!q||[p.name,p.decor,p.pendCat,p.place,p.letter].some(s=>(s||'').toLowerCase().includes(q))));
   const ci=k=>COLORS.findIndex(c=>c.k===k);
   list.sort((a,b)=> so==='name'?(a.name||'').localeCompare(b.name||'')
@@ -506,12 +503,26 @@ function render(){
     : so==='fruits'?(b.fruits||0)-(a.fruits||0)
     : (b.createdAt||0)-(a.createdAt||0));
 
+  // pagination: only render one page of cards at a time
+  const total=list.length, pages=Math.max(1,Math.ceil(total/pageSize));
+  if(page>pages) page=pages;
+  if(page<1) page=1;
+  lastPage=pages;
+  const start=(page-1)*pageSize;
+  const shown=list.slice(start,start+pageSize);
+  const sizeSel=`<select class="pgsize" aria-label="Per page">${[25,50,100].map(n=>`<option value="${n}" ${n===pageSize?'selected':''}>${n} per page</option>`).join('')}</select>`;
+  const pager = total ? `<span class="tag">${start+1}–${start+shown.length} of ${total}</span>
+    <span class="row"><button data-pg="first" ${page<=1?'disabled':''}>«</button><button data-pg="prev" ${page<=1?'disabled':''}>‹ Prev</button><span>Page ${page} / ${pages}</span><button data-pg="next" ${page>=pages?'disabled':''}>Next ›</button><button data-pg="last" ${page>=pages?'disabled':''}>»</button></span>${sizeSel}` : '';
+  $('pagerTop').innerHTML=pager;
+  $('pagerBot').innerHTML=pages>1?pager:'';
+
   if(!list.length){ $('list').innerHTML=`<div class="empty">${tab==='active'?'No Pikmin here yet.':'Nothing released.'}</div>`; }
-  else $('list').innerHTML = list.map(p=>{
+  else $('list').innerHTML = shown.map(p=>{
     const colorOpts=COLORS.map(c=>`<option ${c.k===p.color?'selected':''}>${c.k}</option>`).join('');
     const relInfo=p.released?`<span class="tag">Released ${p.releasedAt?new Date(p.releasedAt).toLocaleDateString():''}</span>`:'';
     const d=decorByName(p.decor);
-    const badge=!p.decor?`<span class="tag">⏳ no decor yet</span>`:(p.rare?`<span class="badge">★ Rare decor</span>`:`<span class="tag">✓ has decor</span>`);
+    const st=statusOf(p);
+    const badge=st==='none'?`<span class="tag">⏳ no decor yet</span>`:(st==='rare'?`<span class="badge">★ Rare decor</span>`:`<span class="tag">✓ has decor</span>`);
     return `<div class="p ${p.released?'rel':''}" data-id="${p.id}">
       <div class="top">
         <span class="dot" style="background:${cHex(p.color)};width:20px;height:20px"></span>
@@ -520,8 +531,12 @@ function render(){
       </div>
       <div class="meta">
         <select data-f="color">${colorOpts}</select>
-        <input class="decor" data-f="decor" list="decorlist" value="${esc(displayDecor(p))}" placeholder="No decor (type to search)" autocomplete="off" style="flex:1;min-width:150px">
+        <input class="decor" data-f="decor" list="decorlist" value="${esc(displayDecor(p))}" placeholder="Decor or category (type to search)" autocomplete="off" style="flex:1;min-width:150px">
         ${extrasHtml(d,p)}
+      </div>
+      <div class="meta">
+        <span class="lbl">Decor status</span>
+        <div class="pick">${STATUSES.map(([v,l])=>`<button type="button" data-cs="${v}" class="${v===st?'on':''}">${l}</button>`).join('')}</div>
       </div>
       <div class="meta">
         <span class="stepper"><span class="lbl">Affinity</span><button data-s="affinity" data-d="-1">−</button><span class="hearts">${hearts(p.affinity)}</span><button data-s="affinity" data-d="1">+</button></span>
@@ -542,7 +557,8 @@ document.addEventListener('click',e=>{
   const b=e.target.closest('button'); if(!b) return;
   const card=b.closest('.p'); if(!card) return;
   const id=card.dataset.id, p=items.find(x=>x.id===id); if(!p) return;
-  if(b.dataset.s){ const max=b.dataset.s==='affinity'?8:Infinity; patch(id,{[b.dataset.s]:Math.min(max,Math.max(0,(+p[b.dataset.s]||0)+(+b.dataset.d)))}); }
+  if(b.dataset.cs){ setStatus(id,b.dataset.cs); }
+  else if(b.dataset.s){ const max=b.dataset.s==='affinity'?8:Infinity; patch(id,{[b.dataset.s]:Math.min(max,Math.max(0,(+p[b.dataset.s]||0)+(+b.dataset.d)))}); }
   else if(b.dataset.a==='release') patch(id,{released:true,releasedAt:Date.now()});
   else if(b.dataset.a==='restore') patch(id,{released:false,releasedAt:null});
   else if(b.dataset.a==='delete') removeForever(id);
@@ -556,8 +572,8 @@ document.addEventListener('change',e=>{
     const r = resolveDecor(t.value);
     if(r===null){ render(); return; }
     const d=decorByName(r.decor);
-    patch(id,{decor:r.decor, pendCat:r.pendCat, rare:!!(d&&d.rare&&cur.rare), place:d&&d.place?(cur.place||''):'', letter:d&&d.letter?(cur.letter||''):''});
-  } else if(f==='rare'){ patch(id,{rare:t.checked}); }
+    patch(id,{decor:r.decor, pendCat:r.pendCat, place:d&&d.place?(cur.place||''):'', letter:d&&d.letter?(cur.letter||''):''});
+  }
   else if(f==='letter'){ patch(id,{letter:t.value.trim().toUpperCase()}); }
   else if(f==='fruits'){ patch(id,{fruits:Math.max(0,Math.floor(+t.value)||0)}); }
   else { patch(id,{[f]:t.value.trim()}); }
@@ -567,10 +583,23 @@ $('newDecor').addEventListener('input',refreshNewExtras);
 $('newDecor').addEventListener('change',refreshNewExtras);
 $('addBtn').onclick=addPikmin;
 $('newName').addEventListener('keydown',e=>{ if(e.key==='Enter') addPikmin(); });
-$('tabActive').onclick=()=>{tab='active';render();};
-$('tabReleased').onclick=()=>{tab='released';render();};
-$('clearFilters').onclick=()=>{colorFilter=null;catFilter=null;$('q').value='';$('fDecor').value='all';render();};
-['q','fDecor','sort'].forEach(i=>$(i).addEventListener('input',render));
+$('tabActive').onclick=()=>{tab='active';page=1;render();};
+$('tabReleased').onclick=()=>{tab='released';page=1;render();};
+$('clearFilters').onclick=()=>{colorFilter=null;catFilter=null;$('q').value='';$('fDecor').value='all';page=1;render();};
+['q','fDecor','sort'].forEach(i=>$(i).addEventListener('input',()=>{page=1;render();}));
+document.addEventListener('click',e=>{
+  const b=e.target.closest('[data-pg]'); if(!b||b.disabled) return;
+  const k=b.dataset.pg;
+  page = k==='first'?1 : k==='prev'?page-1 : k==='next'?page+1 : lastPage;
+  render();
+  $('pagerTop').scrollIntoView({block:'start'});
+});
+document.addEventListener('change',e=>{
+  if(!e.target.classList||!e.target.classList.contains('pgsize')) return;
+  pageSize=+e.target.value||25; page=1;
+  try{ localStorage.setItem('pikminTracker.pageSize',String(pageSize)); }catch(err){}
+  render();
+});
 
 /* ---------- backup ---------- */
 $('exportBtn').onclick=()=>{
@@ -597,7 +626,7 @@ $('importFile').onchange=async e=>{
     let n=0;
     arr.forEach(p=>{
       if(!p||!p.id||!COLORS.some(c=>c.k===p.color)) return;
-      upsert({id:String(p.id),name:p.name||p.color,color:p.color,decor:p.decor||'',pendCat:p.pendCat||'',rare:!!p.rare,place:p.place||'',letter:p.letter||'',affinity:Math.min(8,Math.max(0,+p.affinity||0)),fruits:+p.fruits||0,released:!!p.released,releasedAt:p.releasedAt||null,createdAt:p.createdAt||Date.now()});
+      upsert({id:String(p.id),name:p.name||p.color,color:p.color,decor:p.decor||'',pendCat:p.pendCat||'',status:statusOf(p),place:p.place||'',letter:p.letter||'',affinity:Math.min(8,Math.max(0,+p.affinity||0)),fruits:+p.fruits||0,released:!!p.released,releasedAt:p.releasedAt||null,createdAt:p.createdAt||Date.now()});
       n++;
     });
     $('ioMsg').textContent='Imported '+n+' Pikmin.';
